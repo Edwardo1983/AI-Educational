@@ -37,6 +37,7 @@ coverage.xml
 *.cover
 *.log
 .git
+instance/
 .mypy_cache
 .pytest_cache
 .hypothesis
