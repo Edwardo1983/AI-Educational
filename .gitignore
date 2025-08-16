@@ -1,0 +1,45 @@
+# Python
+Copy.env
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+*.pdf
+.Python
+.build/
+dist/
+
+# venv
+.venv/
+venv/
+
+# IDE
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets
+.env
+.env.*
+env/
+
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+.git
+.mypy_cache
+.pytest_cache
+.hypothesis
+*.egg-info/
+.DS_Store
+materiale_didactice/
