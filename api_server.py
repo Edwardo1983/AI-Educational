@@ -10,21 +10,8 @@ import logging
 from datetime import datetime
 import time
 
-# Importuri pentru sistemul gratuit
-try:
-    from main_free import SistemEducationalFree
-    from config import Config, token_monitor
-    from ai_clients import ai_client_manager
-except ImportError as e:
-    print(f"ATENȚIE: Nu s-au putut importa modulele pentru varianta gratuită: {e}")
-    print("Sistemul va rula doar cu funcționalitățile Pro.")
-
-# Importăm logica existentă din main.py
-from main import (
-    creeaza_structura_educationala,
-    Director,
-    Profesor
-)
+# Încarcă variabilele din fișierul .env
+load_dotenv()
 
 # Configurarea logging-ului pentru API
 logging.basicConfig(
@@ -37,8 +24,35 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Încarcă variabilele din fișierul .env
-load_dotenv()
+# Importuri pentru sistemul gratuit
+try:
+    from flask_limiter import Limiter
+    from flask_limiter.util import get_remote_address
+    limiter_available = True
+except ImportError as e:
+    logger.warning(f"Flask-Limiter nu este disponibil: {e}")
+    limiter_available = False
+
+try:
+    from main_free import SistemEducationalFree
+    from config import Config, token_monitor
+    from ai_clients import ai_client_manager
+    free_system_available = True
+except ImportError as e:
+    logger.warning(f"Modulele pentru varianta gratuită nu sunt disponibile: {e}")
+    free_system_available = False
+
+# Importăm logica existentă din main.py
+try:    
+    from main import (
+        creeaza_structura_educationala,
+        Director,
+        Profesor
+    )
+    main_system_available = True
+except ImportError as e:
+    logger.error(f"Nu s-au putut importa modulele principale: {e}")
+    main_system_available = False
 
 # Verificăm cheile API la pornire
 def verify_api_keys():
@@ -69,29 +83,47 @@ CORS(app)
 # Inițializarea sistemului educațional la pornirea serverului
 logger.info("Initializing educational system...")
 
-try:
-    # Sistemul Pro (existent)
-    scoala_normala_obj, scoala_muzica_obj = creeaza_structura_educationala()
-    SCOALA_NORMALA_GLOBAL = scoala_normala_obj
-    SCOALA_MUZICA_GLOBAL = scoala_muzica_obj
-    
-    # Sistemul gratuit (nou)
+# Variabile globale pentru sisteme
+SCOALA_NORMALA_GLOBAL = None
+SCOALA_MUZICA_GLOBAL = None
+sistem_gratuit = None
+
+# Încercăm să inițializăm sistemul principal
+if main_system_available:
+    try:
+        # Sistemul Pro (existent)
+        scoala_normala_obj, scoala_muzica_obj = creeaza_structura_educationala()
+        SCOALA_NORMALA_GLOBAL = scoala_normala_obj
+        SCOALA_MUZICA_GLOBAL = scoala_muzica_obj
+        logger.info("✅ Sistemul principal inițializat cu succes")
+    except Exception as e:
+        logger.critical(f"❌ Failed to initialize educational system: {e}")
+        
+# Încercăm să inițializăm sistemul gratuit
+if free_system_available:
     try:
         sistem_gratuit = SistemEducationalFree()
         logger.info("✅ Sistem gratuit inițializat cu succes")
     except Exception as e:
         logger.error(f"❌ Eroare la inițializarea sistemului gratuit: {e}")
-        sistem_gratuit = None
-    
-    logger.info("✅ Educational system initialized successfully.")
-    
-except Exception as e:
-    logger.critical(f"❌ Failed to initialize educational system: {e}")
-    exit(1)
-
+              
 # ==================== ENDPOINT-URI EXISTENTE (PRO) ====================
 
-limiter = Limiter(app)
+# Inițializăm limiter-ul dacă este disponibil
+if limiter_available:
+    limiter = Limiter(
+        app,
+        key_func=get_remote_address,
+        default_limits=["50 per day", "10 per hour"]
+    )
+else:
+    # Mock limiter decorator când Flask-Limiter nu e disponibil
+    class MockLimiter:
+        def limit(self, *args, **kwargs):
+            def decorator(f):
+                return f
+            return decorator
+    limiter = MockLimiter()
 
 @app.route('/api/intreaba', methods=['POST'])
 @limiter.limit("50/day")
@@ -99,6 +131,11 @@ def intreaba_profesor():
     """
     Endpoint pentru varianta Pro - folosește OpenAI
     """
+    if not main_system_available or not SCOALA_NORMALA_GLOBAL:
+        return jsonify({
+            'success': False, 
+            'error': 'Sistemul principal nu este disponibil'
+        }), 503
     try:
         data = request.json
         intrebare = data.get('intrebare')
@@ -312,10 +349,16 @@ def get_scoli():
     """
     Endpoint pentru a returna lista de școli disponibile
     """
-    scoli_disponibile = [
-        {'nume': SCOALA_NORMALA_GLOBAL.nume, 'tip': SCOALA_NORMALA_GLOBAL.tip},
-        {'nume': SCOALA_MUZICA_GLOBAL.nume, 'tip': SCOALA_MUZICA_GLOBAL.tip}
-    ]
+    if SCOALA_NORMALA_GLOBAL and SCOALA_MUZICA_GLOBAL:
+        scoli_disponibile = [
+            {'nume': SCOALA_NORMALA_GLOBAL.nume, 'tip': SCOALA_NORMALA_GLOBAL.tip},
+            {'nume': SCOALA_MUZICA_GLOBAL.nume, 'tip': SCOALA_MUZICA_GLOBAL.tip}
+        ]
+    else:
+        scoli_disponibile = [
+            {'nume': 'Scoala_Normală', 'tip': 'Generală'},
+            {'nume': 'Scoala_de_Muzica_George_Enescu', 'tip': 'Specializată'}
+        ]
     
     logger.info("Providing list of schools.")
     return jsonify({'success': True, 'scoli': scoli_disponibile})
@@ -335,7 +378,12 @@ def get_system_status():
     Status general al sistemului
     """
     try:
-        free_stats = token_monitor.get_stats() if sistem_gratuit else {}
+        free_stats = {}
+        if free_system_available and sistem_gratuit:
+            try:
+                free_stats = token_monitor.get_stats()
+            except:
+                pass
         
         status = {
             "system": "AI Educational System",
@@ -343,13 +391,13 @@ def get_system_status():
             "timestamp": datetime.now().isoformat(),
             "services": {
                 "pro_tier": {
-                    "available": bool(os.getenv('OPENAI_API_KEY')),
-                    "status": "active"
+                    "available": main_system_available and bool(os.getenv('OPENAI_API_KEY')),
+                    "status": "active" if main_system_available else "unavailable"
                 },
                 "free_tier": {
-                    "available": sistem_gratuit is not None,
-                    "status": "active" if sistem_gratuit else "unavailable",
-                    "users": len(sistem_gratuit.utilizatori_activi) if sistem_gratuit else 0,
+                    "available": free_system_available and sistem_gratuit is not None,
+                    "status": "active" if (free_system_available and sistem_gratuit) else "unavailable",
+                    "users": len(sistem_gratuit.utilizatori_activi) if (free_system_available and sistem_gratuit) else 0,
                     "max_users": Config.MAX_FREE_USERS if 'Config' in globals() else 10,
                     "token_usage": free_stats.get("usage_percentage", 0)
                 }
@@ -377,15 +425,31 @@ def test_endpoint():
     return jsonify({
         "message": "API funcționează corect!",
         "timestamp": datetime.now().isoformat(),
+        "system_status": {
+            "main_system": main_system_available,
+            "free_system": free_system_available,
+            "limiter": limiter_available
+        },
         "endpoints_available": [
-            "/api/intreaba (PRO)",
-            "/api/free/ask (FREE)",
-            "/api/free/stats (FREE)",
-            "/api/free/health (FREE)",
+            "/api/intreaba (PRO)" if main_system_available else "/api/intreaba (UNAVAILABLE)",
+            "/api/free/ask (FREE)" if free_system_available else "/api/free/ask (UNAVAILABLE)",
             "/api/scoli",
             "/api/clase",
-            "/api/status"
+            "/api/status",
+            "/api/test"
         ]
+    })
+@app.route('/health')
+def health_check():
+    return {"status": "healthy", "service": "AI Educational API"}, 200
+
+@app.route('/')
+def home():
+    return jsonify({
+        "message": "AI Educational System API",
+        "version": "1.0",
+        "documentation": "/api/test pentru testare",
+        "status": "running"
     })
 
 # ==================== GESTIONAREA ERORILOR ====================
@@ -406,10 +470,6 @@ def internal_error(error):
         "message": "Te rugăm să încerci din nou mai târziu",
         "timestamp": datetime.now().isoformat()
     }), 500
-
-@app.route('/health')
-def health_check():
-    return {"status": "healthy", "service": "AI Educational API"}, 200
 
 # ==================== PORNIREA SERVERULUI ====================
 
