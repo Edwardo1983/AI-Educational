@@ -1,33 +1,95 @@
 # Python
-Copy.env
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
-*.egg-info/
-*.pdf
+*.py[cod]
+*$py.class
+*.so
 .Python
-.build/
+build/
+develop-eggs/
 dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
 
-# venv
-.venv/
+# Virtual environments
+.env
+.venv
+env/
 venv/
+ENV/
+env.bak/
+venv.bak/
 
 # IDE
 .vscode/
+.idea/
+*.swp
+*.swo
+*~
 
 # OS
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
+Desktop.ini
 
-# Secrets
-.env
-.env.*
-env/
+# Logs
+*.log
+logs/
+api_server.log
 
-pip-log.txt
-pip-delete-this-directory.txt
+# Windows executables and scripts
+*.exe
+*.msi
+*.msm
+*.msp
+*.bat
+*.cmd
+*.com
+*.pif
+*.scr
+
+# Python executables created by pip/conda
+activate
+activate.bat
+activate.fish
+Activate.ps1
+deactivate.bat
+
+# Specific executables that appear in Python environments
+distro.exe
+dotenv.exe
+f2py.exe
+flask.exe
+gunicorn.exe
+httpx.exe
+jsonschema.exe
+markdown-it.exe
+normalizer.exe
+numpy-config.exe
+openai.exe
+pip.exe
+pip3.13.exe
+pip3.exe
+plotly_get_chrome.exe
+pygmentize.exe
+
+# Coverage reports
+htmlcov/
 .tox/
 .coverage
 .coverage.*
@@ -35,12 +97,37 @@ pip-delete-this-directory.txt
 nosetests.xml
 coverage.xml
 *.cover
-*.log
-.git
-instance/
-.mypy_cache
-.pytest_cache
-.hypothesis
-*.egg-info/
-.DS_Store
+.hypothesis/
+.pytest_cache/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pyenv
+.python-version
+
+# Environments and secrets
+.env
+.env.*
+config.ini
+secrets.json
+
+# Database
+*.db
+*.sqlite
+
+# Temporary files
+*.tmp
+*.temp
+
+# Materials and uploads
 materiale_didactice/
+uploads/
+
+# OS specific
+$RECYCLE.BIN/
+
+# Python specific
+*.pyc
+*.pyo
+*.pyd
