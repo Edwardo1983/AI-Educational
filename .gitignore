@@ -22,7 +22,6 @@ wheels/
 MANIFEST
 
 # Virtual environments
-.env
 .venv
 env/
 venv/
@@ -107,8 +106,6 @@ coverage.xml
 .python-version
 
 # Environments and secrets
-.env
-.env.*
 config.ini
 secrets.json
 
@@ -121,7 +118,6 @@ secrets.json
 *.temp
 
 # Materials and uploads
-materiale_didactice/
 uploads/
 
 # OS specific
