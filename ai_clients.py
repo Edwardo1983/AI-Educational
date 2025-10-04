@@ -1,7 +1,9 @@
+# Gestionare clienti AI pentru variantele free si pro
 import openai
 import anthropic
 import requests
 import json
+import random
 import hashlib
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -11,14 +13,14 @@ import logging
 logger = logging.getLogger(__name__)
 
 class ResponseCache:
-    """Cache pentru răspunsuri AI"""
+    """Cache pentru raspunsuri AI"""
     
     def __init__(self):
         self.cache_file = Config.CACHE_FILE
         self.load_cache()
     
     def load_cache(self):
-        """Încarcă cache-ul din fișier"""
+        """Incarca cache-ul din fisier"""
         try:
             if Path(self.cache_file).exists():
                 with open(self.cache_file, 'r', encoding='utf-8') as f:
@@ -26,11 +28,11 @@ class ResponseCache:
             else:
                 self.cache = {}
         except Exception as e:
-            logger.error(f"Eroare la încărcarea cache-ului: {e}")
+            logger.error(f"Eroare la incarcarea cache-ului: {e}")
             self.cache = {}
     
     def save_cache(self):
-        """Salvează cache-ul în fișier"""
+        """Salveaza cache-ul in fisier"""
         try:
             with open(self.cache_file, 'w', encoding='utf-8') as f:
                 json.dump(self.cache, f, ensure_ascii=False, indent=2)
@@ -38,26 +40,26 @@ class ResponseCache:
             logger.error(f"Eroare la salvarea cache-ului: {e}")
     
     def get_cache_key(self, prompt, model, temperature):
-        """Generează cheie unică pentru cache"""
+        """Genereaza cheie unica pentru cache"""
         content = f"{prompt}_{model}_{temperature}"
         return hashlib.md5(content.encode()).hexdigest()
     
     def get(self, prompt, model, temperature):
-        """Obține răspuns din cache"""
+        """Obtine raspuns din cache"""
         key = self.get_cache_key(prompt, model, temperature)
         
         if key in self.cache:
             cached_item = self.cache[key]
-            # Verifică dacă cache-ul nu a expirat
+            # Verifica daca cache-ul nu a expirat
             cached_time = datetime.fromisoformat(cached_item['timestamp'])
             if datetime.now() - cached_time < timedelta(seconds=Config.CACHE_DURATION):
-                logger.info("Răspuns găsit în cache")
+                logger.info("Raspuns gasit in cache")
                 return cached_item['response']
         
         return None
     
     def set(self, prompt, model, temperature, response):
-        """Salvează răspuns în cache"""
+        """Salveaza raspuns in cache"""
         key = self.get_cache_key(prompt, model, temperature)
         self.cache[key] = {
             'response': response,
@@ -66,14 +68,14 @@ class ResponseCache:
         self.save_cache()
 
 class AIClientManager:
-    """Manager pentru clienții AI"""
+    """Manager pentru clientii AI"""
     
     def __init__(self):
         self.cache = ResponseCache()
         self.setup_clients()
     
     def setup_clients(self):
-        """Configurează clienții AI"""
+        """Configureaza clientii AI"""
         # OpenAI (pentru varianta Pro)
         if Config.OPENAI_API_KEY:
             self.openai_client = openai.OpenAI(api_key=Config.OPENAI_API_KEY)
@@ -83,31 +85,36 @@ class AIClientManager:
             self.claude_client = anthropic.Anthropic(api_key=Config.CLAUDE_API_KEY)
     
     def estimate_tokens(self, text):
-        """Estimează numărul de tokeni"""
-        # Estimare aproximativă: 1 token ≈ 4 caractere pentru română
+        """Estimeaza numarul de tokeni"""
+        # Estimare aproximativa: 1 token corespunde la aproximativ 4 caractere
         return len(text) // 3
     
     def choose_model(self, subject, is_free_tier=True):
-        """Alege modelul potrivit în funcție de materie și tier"""
+        """Alege modelul potrivit in functie de materie si tier"""
         if not is_free_tier:
-            # Pentru varianta Pro, folosește OpenAI
-            return "openai", "gpt-4o"
-        
-        # Pentru varianta gratuită
+            if subject in Config.STEM_SUBJECTS:
+                return "claude", "claude-4.5-sonnet"
+            return "openai", "gpt-5"
+
         if subject in Config.STEM_SUBJECTS:
-            return "claude", "claude-3-5-haiku-latest"
-        else:
             return "deepseek", "deepseek-chat"
-    
-    def call_deepseek(self, messages, max_tokens=1000, temperature=0.7):
-        """Apel către DeepSeek API"""
+
+        model = random.choices(
+            ["gpt-5-nano", "gpt-4.1-nano"],
+            weights=[0.75, 0.25],
+            k=1
+        )[0]
+        return "openai", model
+
+    def call_deepseek(self, messages, model="deepseek-chat", max_tokens=1000, temperature=0.7):
+        """Apel catre DeepSeek API"""
         headers = {
             "Authorization": f"Bearer {Config.DEEPSEEK_API_KEY}",
             "Content-Type": "application/json"
         }
         
         data = {
-            "model": "deepseek-chat",
+            "model": model,
             "messages": messages,
             "max_tokens": max_tokens,
             "temperature": temperature,
@@ -131,10 +138,10 @@ class AIClientManager:
             logger.error(f"Eroare DeepSeek API: {e}")
             raise
     
-    def call_claude(self, messages, max_tokens=1000, temperature=0.7):
-        """Apel către Claude API"""
+    def call_claude(self, messages, model="claude-4.5-sonnet", max_tokens=1000, temperature=0.7):
+        """Apel catre Claude API"""
         try:
-            # Convertește mesajele pentru Claude
+            # Converteste mesajele pentru Claude
             system_message = ""
             user_messages = []
             
@@ -145,7 +152,7 @@ class AIClientManager:
                     user_messages.append(msg)
             
             response = self.claude_client.messages.create(
-                model="claude-3-5-haiku-20241022",
+                model=model,
                 max_tokens=max_tokens,
                 temperature=temperature,
                 system=system_message,
@@ -161,98 +168,147 @@ class AIClientManager:
             logger.error(f"Eroare Claude API: {e}")
             raise
     
-    def call_openai(self, messages, model="gpt-4o", max_tokens=1000, temperature=0.7):
-        """Apel către OpenAI API (pentru varianta Pro)"""
+    @staticmethod
+    def _openai_messages_payload(messages):
+        """Normalizeaza mesajele pentru endpoint-ul Responses"""
+        payload = []
+        for message in messages:
+            payload.append({
+                "role": message.get("role", "user"),
+                "content": [
+                    {"type": "text", "text": message.get("content", "")}
+                ]
+            })
+        return payload
+
+    @staticmethod
+    def _openai_output_text(response):
+        """Extrage continutul text din raspunsul Responses"""
+        content = getattr(response, "output_text", None)
+        if content:
+            return content
+        parts = []
+        for item in getattr(response, "output", []):
+            item_type = getattr(item, "type", None) or (item.get("type") if isinstance(item, dict) else None)
+            if item_type == "message":
+                content_items = getattr(item, "content", None) or (item.get("content") if isinstance(item, dict) else [])
+                for sub in content_items:
+                    text_value = getattr(sub, "text", None) or (sub.get("text") if isinstance(sub, dict) else None)
+                    if text_value:
+                        parts.append(text_value)
+            elif item_type in {"output_text", "text"}:
+                text_value = getattr(item, "text", None) or (item.get("text") if isinstance(item, dict) else None)
+                if text_value:
+                    parts.append(text_value)
+        return "".join(parts)
+
+    @staticmethod
+    def _openai_total_tokens(response, fallback):
+        """Obtine totalul de tokeni folositi din raspuns"""
+        usage = getattr(response, "usage", None)
+        if usage is None:
+            return fallback
+        total = getattr(usage, "total_tokens", None)
+        if total:
+            return total
+        input_tokens = getattr(usage, "input_tokens", None)
+        output_tokens = getattr(usage, "output_tokens", None)
+        if input_tokens is None and isinstance(usage, dict):
+            total = usage.get("total_tokens")
+            if total:
+                return total
+            input_tokens = usage.get("input_tokens")
+            output_tokens = usage.get("output_tokens")
+        total = (input_tokens or 0) + (output_tokens or 0)
+        return total if total else fallback
+
+    def call_openai(self, messages, model="gpt-5", max_tokens=1000, temperature=0.7):
+        """Apel catre OpenAI API (pentru varianta Pro) folosind Responses"""
+        if not hasattr(self, "openai_client"):
+            raise ValueError("OpenAI client nu este configurat")
+
         try:
-            response = self.openai_client.chat.completions.create(
+            response = self.openai_client.responses.create(
                 model=model,
-                messages=messages,
-                max_tokens=max_tokens,
-                temperature=temperature
+                input=self._openai_messages_payload(messages),
+                temperature=temperature,
+                max_output_tokens=max_tokens
             )
-            
+
+            content = self._openai_output_text(response)
+            if not content:
+                raise ValueError("OpenAI nu a returnat continut")
+
+            tokens_used = self._openai_total_tokens(response, fallback=max_tokens)
             return {
-                "content": response.choices[0].message.content,
-                "tokens_used": response.usage.total_tokens
+                "content": content,
+                "tokens_used": tokens_used
             }
-        
+
         except Exception as e:
             logger.error(f"Eroare OpenAI API: {e}")
             raise
-       
-    def get_free_tier_response(prompt, max_tokens=400):
-        """Funcție optimizată pentru free tier"""
-        try:
-            response = openai.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=max_tokens,
-                temperature=0.7,
-                timeout=10  # Timeout mai mic pentru free
-            )
-            
-            return {
-                "content": response.choices[0].message.content,
-                "tokens_used": response.usage.total_tokens,
-                "provider": "openai-free",
-                "from_cache": False
-            }
-        except Exception as e:
-            logger.error(f"Eroare free tier: {e}")
-            return {
-                "content": "Îmi pare rău, am întâmpinat o problemă tehnică. Te rog încearcă din nou.",
-                "tokens_used": 0,
-                "provider": "error",
-                "from_cache": False
-            }
+
+    def get_free_tier_response(self, prompt, subject, user_id="default", max_tokens=400, temperature=0.7):
+        """Ruleaza fluxul free tier reutilizand mecanismul standard"""
+        return self.get_ai_response(
+            prompt=prompt,
+            subject=subject,
+            user_id=user_id,
+            is_free_tier=True,
+            max_tokens=max_tokens,
+            temperature=temperature
+        )
 
     def get_ai_response(self, prompt, subject, user_id="default", 
                        is_free_tier=True, max_tokens=1000, temperature=0.7):
-        """Obține răspuns de la AI cu toate optimizările"""
+        """Obtine raspuns de la AI cu toate optimizarile"""
         
-        # Verifică cache-ul mai întâi
+        # Verifica cache-ul mai intai
         provider, model = self.choose_model(subject, is_free_tier)
         cached_response = self.cache.get(prompt, model, temperature)
         
         if cached_response:
             return {
                 "content": cached_response,
-                "tokens_used": 0,  # Nu consumă tokeni din cache
+                "tokens_used": 0,  # Nu consuma tokeni din cache
                 "provider": f"{provider} (cached)",
                 "from_cache": True
             }
         
-        # Estimează tokenii necesari
+        # Estimeaza tokenii necesari
         estimated_tokens = self.estimate_tokens(prompt) + max_tokens
         
-        # Verifică limitele pentru varianta gratuită
+        # Verifica limitele pentru varianta gratuita
         if is_free_tier:
             can_use, message = token_monitor.can_use_tokens(user_id, estimated_tokens)
             if not can_use:
-                raise Exception(f"Limită depășită: {message}")
+                raise Exception(f"Limita depasita: {message}")
         
-        # Pregătește mesajele
+        # Pregateste mesajele
         messages = [
-            {"role": "system", "content": "Ești un profesor prietenos și empatic care ajută elevii să învețe."},
+            {"role": "system", "content": "Esti un profesor prietenos si empatic care ajuta elevii sa invete."},
             {"role": "user", "content": prompt}
         ]
         
-        # Apelează API-ul potrivit
+        # Apeleaza API-ul potrivit
+        handlers = {
+            "deepseek": lambda: self.call_deepseek(messages, model=model, max_tokens=max_tokens, temperature=temperature),
+            "claude": lambda: self.call_claude(messages, model=model, max_tokens=max_tokens, temperature=temperature),
+            "openai": lambda: self.call_openai(messages, model=model, max_tokens=max_tokens, temperature=temperature)
+        }
+
         try:
-            if provider == "deepseek":
-                result = self.call_deepseek(messages, max_tokens, temperature)
-            elif provider == "claude":
-                result = self.call_claude(messages, max_tokens, temperature)
-            elif provider == "openai":
-                result = self.call_openai(messages, model, max_tokens, temperature)
-            else:
-                raise Exception(f"Provider necunoscut: {provider}")
-            
-            # Adaugă tokenii folosiți
+            if provider not in handlers:
+                raise ValueError(f"Provider necunoscut: {provider}")
+
+            result = handlers[provider]()
+
+            # Adauga tokenii folositi
             if is_free_tier:
                 token_monitor.add_tokens(user_id, result["tokens_used"])
             
-            # Salvează în cache
+            # Salveaza in cache
             self.cache.set(prompt, model, temperature, result["content"])
             
             result["provider"] = provider
@@ -261,8 +317,9 @@ class AIClientManager:
             return result
         
         except Exception as e:
-            logger.error(f"Eroare la obținerea răspunsului AI: {e}")
+            logger.error(f"Eroare la obtinerea raspunsului AI: {e}")
             raise
 
-# Instanță globală
+# Instanta globala
 ai_client_manager = AIClientManager()
+
