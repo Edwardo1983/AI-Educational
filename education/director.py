@@ -18,7 +18,7 @@ class Director:
     def __init__(self, nume: str, scoala, configurari: Optional[ConfigurariProfesor] = None) -> None:
         self.nume = nume
         self.scoala = scoala
-        self.configurari = configurari or ConfigurariProfesor(temperature=0.3, model="gpt-4o")
+        self.configurari = configurari or ConfigurariProfesor(temperature=0.3, model="gpt-5")
         self.istoric_decizii = []
         self.gestor_materiale = get_gestor_materiale()
         self.cunostinte_pedagogice = ""

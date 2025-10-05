@@ -17,7 +17,7 @@ class ConfigurariProfesor:
         self,
         temperature: float = 0.7,
         max_tokens: int = 2584,
-        model: str = "gpt-3.5-turbo",
+        model: str = "gpt-5-nano",
         personalitate: str = "prietenos",
         stil_predare: str = "interactiv",
         tehnici_speciale: Optional[List[str]] = None,
