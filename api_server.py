@@ -1,488 +1,442 @@
-# api_server.py - Versiunea actualizată cu suport pentru varianta gratuită
-
-# Importăm librăriile necesare
-from flask import Flask, request, jsonify
-from flask_limiter import Limiter
-from flask_cors import CORS
+# API REST pentru gestionarea serviciilor educationale AI (Pro si Free tiers)
 import os
-from dotenv import load_dotenv
 import logging
-from datetime import datetime
-import time
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+from typing import Any, Callable, Dict, Mapping, Optional, Tuple
 
-# Încarcă variabilele din fișierul .env
+from dotenv import load_dotenv
+from flask import Blueprint, Flask, jsonify, request
+from flask_cors import CORS
+
 load_dotenv()
 
-# Configurarea logging-ului pentru API
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
+    format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[
-        logging.FileHandler('api_server.log', encoding='utf-8'),
-        logging.StreamHandler()
-    ]
+        logging.FileHandler("api_server.log", encoding="utf-8"),
+        logging.StreamHandler(),
+    ],
 )
 logger = logging.getLogger(__name__)
 
-# Importuri pentru sistemul gratuit
-try:
-    from flask_limiter import Limiter
-    from flask_limiter.util import get_remote_address
-    limiter_available = True
-except ImportError as e:
-    logger.warning(f"Flask-Limiter nu este disponibil: {e}")
-    limiter_available = False
+DEFAULT_LIMITS: Tuple[str, str] = ("50 per day", "10 per hour")
+DATE_FORMAT = "%Y-%m-%d"
 
-try:
-    from main_free import SistemEducationalFree
-    from config import Config, token_monitor
-    from ai_clients import ai_client_manager
-    free_system_available = True
-except ImportError as e:
-    logger.warning(f"Modulele pentru varianta gratuită nu sunt disponibile: {e}")
-    free_system_available = False
 
-# Importăm logica existentă din main.py
-try:    
-    from main import (
-        creeaza_structura_educationala,
-        Director,
-        Profesor
-    )
-    main_system_available = True
-except ImportError as e:
-    logger.error(f"Nu s-au putut importa modulele principale: {e}")
-    main_system_available = False
+@dataclass
+class DependencyContainer:
+    """Abstrage dependintele externe folosite de API."""
 
-# Verificăm cheile API la pornire
-def verify_api_keys():
-    """Verifică configurarea API keys"""
-    missing_keys = []
-    
-    if not os.getenv('OPENAI_API_KEY'):
-        missing_keys.append('OPENAI_API_KEY')
-    
-    if not os.getenv('DEEPSEEK_API_KEY'):
-        missing_keys.append('DEEPSEEK_API_KEY')
-    
-    if not os.getenv('CLAUDE_API_KEY'):
-        missing_keys.append('CLAUDE_API_KEY')
-    
-    if missing_keys:
-        logger.warning(f"Chei API lipsă: {', '.join(missing_keys)}")
-        logger.warning("Unele funcționalități vor fi limitate.")
-    else:
-        logger.info("✅ Toate cheile API sunt configurate")
+    main_system_available: bool = False
+    free_system_available: bool = False
+    limiter_factory: Optional[Callable[..., Any]] = None
+    get_remote_address: Optional[Callable[..., str]] = None
+    default_limits: Tuple[str, str] = DEFAULT_LIMITS
+    scoala_normala: Optional[Any] = None
+    scoala_muzica: Optional[Any] = None
+    sistem_gratuit: Optional[Any] = None
+    token_monitor: Optional[Any] = None
+    ai_client_manager: Optional[Any] = None
+    Config: Optional[Any] = None
+    errors: Dict[str, str] = field(default_factory=dict)
 
-verify_api_keys()
+    @property
+    def limiter_available(self) -> bool:
+        return self.limiter_factory is not None and self.get_remote_address is not None
 
-# Inițializează aplicația Flask
-app = Flask(__name__)
-CORS(app)
 
-# Inițializarea sistemului educațional la pornirea serverului
-logger.info("Initializing educational system...")
+def load_dependencies() -> DependencyContainer:
+    deps = DependencyContainer()
 
-# Variabile globale pentru sisteme
-SCOALA_NORMALA_GLOBAL = None
-SCOALA_MUZICA_GLOBAL = None
-sistem_gratuit = None
-
-# Încercăm să inițializăm sistemul principal
-if main_system_available:
     try:
-        # Sistemul Pro (existent)
+        from flask_limiter import Limiter
+        from flask_limiter.util import get_remote_address
+
+        deps.limiter_factory = Limiter
+        deps.get_remote_address = get_remote_address
+    except ImportError as exc:
+        logger.warning("Flask-Limiter nu este disponibil: %s", exc)
+        deps.errors["limiter"] = str(exc)
+
+    try:
+        from main import creeaza_structura_educationala
+
         scoala_normala_obj, scoala_muzica_obj = creeaza_structura_educationala()
-        SCOALA_NORMALA_GLOBAL = scoala_normala_obj
-        SCOALA_MUZICA_GLOBAL = scoala_muzica_obj
-        logger.info("✅ Sistemul principal inițializat cu succes")
-    except Exception as e:
-        logger.critical(f"❌ Failed to initialize educational system: {e}")
-        
-# Încercăm să inițializăm sistemul gratuit
-if free_system_available:
+        deps.scoala_normala = scoala_normala_obj
+        deps.scoala_muzica = scoala_muzica_obj
+        deps.main_system_available = True
+    except ImportError as exc:
+        logger.error("Modulele principale nu pot fi importate: %s", exc)
+        deps.errors["main"] = str(exc)
+    except Exception as exc:
+        logger.critical("Initializarea sistemului principal a esuat: %s", exc, exc_info=True)
+        deps.errors["main_init"] = str(exc)
+
     try:
-        sistem_gratuit = SistemEducationalFree()
-        logger.info("✅ Sistem gratuit inițializat cu succes")
-    except Exception as e:
-        logger.error(f"❌ Eroare la inițializarea sistemului gratuit: {e}")
-              
-# ==================== ENDPOINT-URI EXISTENTE (PRO) ====================
+        from main_free import SistemEducationalFree
+        from config import Config, token_monitor
+        from ai_clients import ai_client_manager
 
-# Inițializăm limiter-ul dacă este disponibil
-if limiter_available:
-    limiter = Limiter(
-        app,
-        key_func=get_remote_address,
-        default_limits=["50 per day", "10 per hour"]
-    )
-else:
-    # Mock limiter decorator când Flask-Limiter nu e disponibil
-    class MockLimiter:
-        def limit(self, *args, **kwargs):
-            def decorator(f):
-                return f
-            return decorator
-    limiter = MockLimiter()
+        deps.sistem_gratuit = SistemEducationalFree()
+        deps.free_system_available = True
+        deps.token_monitor = token_monitor
+        deps.ai_client_manager = ai_client_manager
+        deps.Config = Config
+    except ImportError as exc:
+        logger.warning("Modulele pentru varianta gratuita nu sunt disponibile: %s", exc)
+        deps.errors["free"] = str(exc)
+    except Exception as exc:
+        logger.error("Initializarea sistemului gratuit a esuat: %s", exc, exc_info=True)
+        deps.errors["free_init"] = str(exc)
 
-@app.route('/api/intreaba', methods=['POST'])
-@limiter.limit("50/day")
-def intreaba_profesor():
-    """
-    Endpoint pentru varianta Pro - folosește OpenAI
-    """
-    if not main_system_available or not SCOALA_NORMALA_GLOBAL:
-        return jsonify({
-            'success': False, 
-            'error': 'Sistemul principal nu este disponibil'
-        }), 503
-    try:
-        data = request.json
-        intrebare = data.get('intrebare')
-        scoala_nume = data.get('scoala')
-        clasa = int(data.get('clasa'))
-        
-        if not all([intrebare, scoala_nume is not None, clasa is not None]):
-            logger.warning(f"Missing data for /api/intreaba: intrebare={intrebare}, scoala={scoala_nume}, clasa={clasa}")
-            return jsonify({'success': False, 'error': 'Date incomplete: intrebare, scoala și clasa sunt obligatorii.'}), 400
-        
-        logger.info(f"[PRO] Received question: '{intrebare}' for school '{scoala_nume}', class '{clasa}'")
-        
-        # Selectează școala corectă
-        if scoala_nume == "Scoala_Normală":
-            scoala = SCOALA_NORMALA_GLOBAL
-        elif scoala_nume == "Scoala_de_Muzica_George_Enescu":
-            scoala = SCOALA_MUZICA_GLOBAL
-        else:
-            logger.warning(f"Invalid school name: {scoala_nume}")
-            return jsonify({'success': False, 'error': f'Școala "{scoala_nume}" nu există.'}), 400
-        
-        # Directorul alege profesorul
-        director = scoala.directori[0]
-        profesor_ales = director.alege_profesor_pentru_intrebare(intrebare, clasa)
-        
-        if profesor_ales:
-            logger.info(f"[PRO] Question assigned to: {profesor_ales.nume} ({profesor_ales.materie})")
-            
-            # Folosește varianta Pro (is_free_tier=False)
-            raspuns = profesor_ales.raspunde_intrebare(
-                intrebare, 
-                user_id="pro_user", 
-                is_free_tier=False
-            )
-            
-            logger.info(f"[PRO] Response generated for {profesor_ales.nume}.")
-            
-            return jsonify({
-                'success': True,
-                'raspuns': raspuns,
-                'profesor_nume': profesor_ales.nume,
-                'profesor_materie': profesor_ales.materie,
-                'profesor_personalitate': profesor_ales.configurari.personalitate,
-                'profesor_model_ai': profesor_ales.configurari.model,
-                'tier': 'pro'
-            })
-        else:
-            logger.warning(f"[PRO] No suitable teacher found for question: '{intrebare}'")
-            return jsonify({'success': False, 'error': 'Nu s-a găsit un profesor potrivit pentru această întrebare în clasa specificată.'}), 404
-    
-    except Exception as e:
-        logger.error(f"Error in /api/intreaba: {e}", exc_info=True)
-        return jsonify({'success': False, 'error': f'A apărut o eroare internă: {str(e)}'}), 500
+    return deps
 
-# Metrics pentru monitorizare
-#def log_metrics(response_time, tokens_used, user_id):
-#    metrics = {
-#        'timestamp': time.time(),
-#        'response_time': response_time,
-#       'tokens': tokens_used,
-#        'user_id': user_id
-#    }
-#    save_metrics(metrics)
 
-# ==================== ENDPOINT-URI NOI (GRATUIT) ====================
-
-@app.route('/api/free/ask', methods=['POST'])
-def ask_free():
-    """
-    Endpoint pentru întrebări în varianta gratuită
-    Folosește DeepSeek și Claude cu limitări
-    """
-    if not sistem_gratuit:
-        return jsonify({"error": "Sistemul gratuit nu este disponibil"}), 503
-    
-    try:
-        data = request.json
-        
-        # Validare câmpuri obligatorii
-        required_fields = ['user_id', 'intrebare', 'scoala', 'clasa']
-        for field in required_fields:
-            if field not in data:
-                return jsonify({"error": f"Câmpul '{field}' este obligatoriu"}), 400
-        
-        logger.info(f"[FREE] Received question from user {data['user_id']}: '{data['intrebare']}'")
-        
-        # Procesează întrebarea prin sistemul gratuit
-        rezultat = sistem_gratuit.pune_intrebare(
-            user_id=data['user_id'],
-            intrebare=data['intrebare'],
-            scoala_nume=data['scoala'],
-            clasa=int(data['clasa'])
-        )
-        
-        if "error" in rezultat:
-            logger.warning(f"[FREE] Error for user {data['user_id']}: {rezultat['error']}")
-            return jsonify(rezultat), 400
-        
-        logger.info(f"[FREE] Success for user {data['user_id']}, professor: {rezultat['profesor']['nume']}")
-        
-        # Adaugă informații despre tier
-        rezultat['tier'] = 'free'
-        rezultat['timestamp'] = datetime.now().isoformat()
-        
-        return jsonify(rezultat)
-    
-    except Exception as e:
-        logger.error(f"Error in /api/free/ask: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/api/free/stats', methods=['GET'])
-def get_free_stats():
-    """
-    Statistici pentru varianta gratuită
-    """
-    if not sistem_gratuit:
-        return jsonify({"error": "Sistemul gratuit nu este disponibil"}), 503
-    
-    try:
-        stats = token_monitor.get_stats()
-        
-        return jsonify({
-            "success": True,
-            "data": {
-                "utilizatori_activi": len(sistem_gratuit.utilizatori_activi),
-                "max_utilizatori": sistem_gratuit.max_utilizatori,
-                "tokeni_zilnici": stats["daily_tokens"],
-                "limita_zilnica": stats["max_daily"],
-                "procent_utilizare": round(stats["usage_percentage"], 2),
-                "total_cereri": stats["total_requests"],
-                "alerta_activa": stats["usage_percentage"] > 80,
-                "status": "healthy" if stats["usage_percentage"] < 90 else "warning"
-            },
-            "timestamp": datetime.now().isoformat()
-        })
-    
-    except Exception as e:
-        logger.error(f"Error in /api/free/stats: {e}")
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/api/free/health', methods=['GET'])
-def health_check_free():
-    """
-    Verificare sănătate sistem gratuit
-    """
-    try:
-        stats = token_monitor.get_stats() if sistem_gratuit else {}
-        
-        health_status = {
-            "status": "healthy",
-            "free_tier_enabled": Config.FREE_TIER_ENABLED if 'Config' in globals() else False,
-            "deepseek_configured": bool(os.getenv('DEEPSEEK_API_KEY')),
-            "claude_configured": bool(os.getenv('CLAUDE_API_KEY')),
-            "openai_configured": bool(os.getenv('OPENAI_API_KEY')),
-            "sistem_gratuit_available": sistem_gratuit is not None,
-            "usage_ok": stats.get("usage_percentage", 0) < 90,
-            "timestamp": datetime.now().isoformat()
-        }
-        
-        # Determină statusul general
-        if not health_status["sistem_gratuit_available"]:
-            health_status["status"] = "degraded"
-        elif not health_status["usage_ok"]:
-            health_status["status"] = "warning"
-        
-        return jsonify(health_status)
-    
-    except Exception as e:
-        logger.error(f"Error in health check: {e}")
-        return jsonify({
-            "status": "error",
-            "error": str(e),
-            "timestamp": datetime.now().isoformat()
-        }), 500
-
-@app.route('/api/free/user/<user_id>/stats', methods=['GET'])
-def get_user_stats(user_id):
-    """
-    Statistici pentru un utilizator specific
-    """
-    if not sistem_gratuit:
-        return jsonify({"error": "Sistemul gratuit nu este disponibil"}), 503
-    
-    try:
-        # Încarcă datele de utilizare
-        token_monitor.load_usage()
-        user_tokens = token_monitor.usage_data["users"].get(user_id, 0)
-        
-        return jsonify({
-            "success": True,
-            "user_id": user_id,
-            "data": {
-                "tokeni_folositi": user_tokens,
-                "limita_personala": Config.MAX_TOKENS_PER_USER,
-                "procent_utilizare": round((user_tokens / Config.MAX_TOKENS_PER_USER) * 100, 2),
-                "tokeni_ramasi": max(0, Config.MAX_TOKENS_PER_USER - user_tokens),
-                "este_utilizator_activ": user_id in sistem_gratuit.utilizatori_activi,
-                "poate_pune_intrebari": user_tokens < Config.MAX_TOKENS_PER_USER
-            },
-            "timestamp": datetime.now().isoformat()
-        })
-    
-    except Exception as e:
-        logger.error(f"Error getting user stats for {user_id}: {e}")
-        return jsonify({"error": str(e)}), 500
-
-# ==================== ENDPOINT-URI COMUNE ====================
-
-@app.route('/api/scoli', methods=['GET'])
-def get_scoli():
-    """
-    Endpoint pentru a returna lista de școli disponibile
-    """
-    if SCOALA_NORMALA_GLOBAL and SCOALA_MUZICA_GLOBAL:
-        scoli_disponibile = [
-            {'nume': SCOALA_NORMALA_GLOBAL.nume, 'tip': SCOALA_NORMALA_GLOBAL.tip},
-            {'nume': SCOALA_MUZICA_GLOBAL.nume, 'tip': SCOALA_MUZICA_GLOBAL.tip}
-        ]
+def verify_api_keys(env: Mapping[str, str] = os.environ) -> None:
+    missing = [key for key in ("OPENAI_API_KEY", "DEEPSEEK_API_KEY", "CLAUDE_API_KEY") if not env.get(key)]
+    if missing:
+        logger.warning("Chei API lipsa: %s", ", ".join(missing))
+        logger.warning("Unele functionalitati pot fi indisponibile.")
     else:
-        scoli_disponibile = [
-            {'nume': 'Scoala_Normală', 'tip': 'Generală'},
-            {'nume': 'Scoala_de_Muzica_George_Enescu', 'tip': 'Specializată'}
-        ]
-    
-    logger.info("Providing list of schools.")
-    return jsonify({'success': True, 'scoli': scoli_disponibile})
+        logger.info("Toate cheile API sunt configurate.")
 
-@app.route('/api/clase', methods=['GET'])
-def get_clase():
-    """
-    Endpoint pentru a returna lista de clase disponibile (0-4)
-    """
-    clase_disponibile = list(range(5))
-    logger.info("Providing list of classes.")
-    return jsonify({'success': True, 'clase': clase_disponibile})
 
-@app.route('/api/status', methods=['GET'])
-def get_system_status():
-    """
-    Status general al sistemului
-    """
-    try:
-        free_stats = {}
-        if free_system_available and sistem_gratuit:
+def create_rate_limiter(app: Flask, deps: DependencyContainer) -> Optional[Any]:
+    if not deps.limiter_available:
+        class MockLimiter:
+            def limit(self, *args: Any, **kwargs: Any) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+                def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+                    return func
+
+                return decorator
+
+        return MockLimiter()
+
+    limiter = deps.limiter_factory(  # type: ignore[arg-type]
+        app=app,
+        key_func=deps.get_remote_address,
+        default_limits=list(deps.default_limits),
+    )
+    return limiter
+
+
+def create_pro_blueprint(deps: DependencyContainer, limiter: Any) -> Blueprint:
+    bp = Blueprint("pro_api", __name__)
+    limit = limiter.limit if hasattr(limiter, "limit") else (lambda *a, **k: (lambda f: f))
+
+    @bp.route("/intreaba", methods=["POST"])
+    @limit("50/day")
+    def intreaba_profesor() -> Any:
+        if not deps.main_system_available or not deps.scoala_normala:
+            return jsonify({"success": False, "error": "Sistemul principal nu este disponibil"}), 503
+
+        try:
+            data = request.get_json(force=True)
+        except Exception:
+            return jsonify({"success": False, "error": "Nu s-a putut interpreta payload-ul JSON"}), 400
+
+        intrebare = data.get("intrebare") if isinstance(data, dict) else None
+        scoala_nume = data.get("scoala") if isinstance(data, dict) else None
+        clasa = data.get("clasa") if isinstance(data, dict) else None
+
+        if intrebare is None or scoala_nume is None or clasa is None:
+            logger.warning("Date incomplete pentru /api/intreaba: intrebare=%s, scoala=%s, clasa=%s", intrebare, scoala_nume, clasa)
+            return jsonify({"success": False, "error": "Intrebare, scoala si clasa sunt obligatorii."}), 400
+
+        try:
+            clasa_int = int(clasa)
+        except ValueError:
+            return jsonify({"success": False, "error": "Clasa trebuie sa fie un numar intreg."}), 400
+
+        logger.info("[PRO] Question received: '%s' for school '%s', class '%s'", intrebare, scoala_nume, clasa_int)
+
+        school_map = {
+            "Scoala_Normala": deps.scoala_normala,
+            "Scoala_de_Muzica_George_Enescu": deps.scoala_muzica,
+        }
+        scoala = school_map.get(scoala_nume)
+        if scoala is None:
+            logger.warning("Numele scolii este invalid: %s", scoala_nume)
+            return jsonify({"success": False, "error": f"Scoala '{scoala_nume}' nu exista."}), 400
+
+        try:
+            director = scoala.directori[0]
+            profesor_ales = director.alege_profesor_pentru_intrebare(intrebare, clasa_int)
+        except Exception as exc:
+            logger.error("Eroare la selectarea profesorului: %s", exc, exc_info=True)
+            return jsonify({"success": False, "error": "Nu s-a putut selecta un profesor."}), 500
+
+        if not profesor_ales:
+            logger.warning("[PRO] Nu exista profesor potrivit pentru intrebarea: '%s'", intrebare)
+            return jsonify({"success": False, "error": "Nu s-a gasit un profesor potrivit pentru clasa specificata."}), 404
+
+        logger.info("[PRO] Intrebarea a fost asignata profesorului %s (%s)", profesor_ales.nume, profesor_ales.materie)
+
+        try:
+            raspuns = profesor_ales.raspunde_intrebare(intrebare, user_id="pro_user", is_free_tier=False)
+        except Exception as exc:
+            logger.error("Eroare la generarea raspunsului profesorului: %s", exc, exc_info=True)
+            return jsonify({"success": False, "error": "Nu s-a putut genera raspunsul."}), 500
+
+        return jsonify(
+            {
+                "success": True,
+                "raspuns": raspuns,
+                "profesor_nume": profesor_ales.nume,
+                "profesor_materie": profesor_ales.materie,
+                "profesor_personalitate": getattr(profesor_ales.configurari, "personalitate", "necunoscut"),
+                "profesor_model_ai": getattr(profesor_ales.configurari, "model", "necunoscut"),
+                "tier": "pro",
+            }
+        )
+
+    return bp
+
+
+def create_free_blueprint(deps: DependencyContainer, limiter: Any) -> Blueprint:
+    bp = Blueprint("free_api", __name__)
+
+    @bp.route("/ask", methods=["POST"])
+    def ask_free() -> Any:
+        if not deps.sistem_gratuit:
+            return jsonify({"error": "Sistemul gratuit nu este disponibil"}), 503
+
+        try:
+            data = request.get_json(force=True)
+        except Exception:
+            return jsonify({"error": "Nu s-a putut interpreta payload-ul JSON"}), 400
+
+        required = ["user_id", "intrebare", "scoala", "clasa"]
+        missing = [field for field in required if field not in data]
+        if missing:
+            return jsonify({"error": f"Campurile {missing} sunt obligatorii"}), 400
+
+        logger.info("[FREE] Question from user %s: '%s'", data["user_id"], data["intrebare"])
+
+        try:
+            rezultat = deps.sistem_gratuit.pune_intrebare(
+                user_id=data["user_id"],
+                intrebare=data["intrebare"],
+                scoala_nume=data["scoala"],
+                clasa=int(data["clasa"]),
+            )
+        except Exception as exc:
+            logger.error("[FREE] Eroare la procesarea intrebarii: %s", exc, exc_info=True)
+            return jsonify({"error": "Nu s-a putut procesa intrebarea in varianta gratuita"}), 500
+
+        return jsonify({"success": True, "rezultat": rezultat})
+
+    @bp.route("/stats", methods=["GET"])
+    def get_free_stats() -> Any:
+        if not deps.free_system_available or not deps.token_monitor:
+            return jsonify({"error": "Monitorizarea pentru varianta gratuita nu este disponibila"}), 503
+
+        try:
+            stats = deps.token_monitor.get_stats()
+        except Exception as exc:
+            logger.error("Nu s-au putut obtine statisticile free tier: %s", exc, exc_info=True)
+            return jsonify({"error": "Nu s-au putut obtine statisticile"}), 500
+
+        return jsonify({"success": True, "stats": stats})
+
+    @bp.route("/health", methods=["GET"])
+    def free_health() -> Any:
+        status = {
+            "available": bool(deps.sistem_gratuit),
+            "initialized": deps.free_system_available,
+        }
+        return jsonify({"success": True, "status": status})
+
+    @bp.route("/user/<user_id>/stats", methods=["GET"])
+    def free_user_stats(user_id: str) -> Any:
+        if not deps.sistem_gratuit:
+            return jsonify({"error": "Sistemul gratuit nu este disponibil"}), 503
+
+        utilizatori = getattr(deps.sistem_gratuit, "utilizatori_activi", {})
+        info = utilizatori.get(user_id, {})
+        return jsonify({"success": True, "user_id": user_id, "info": info})
+
+    return bp
+
+
+def register_common_routes(app: Flask, deps: DependencyContainer, limiter: Any) -> None:
+    limit = limiter.limit if hasattr(limiter, "limit") else (lambda *a, **k: (lambda f: f))
+
+    @app.route("/api/scoli", methods=["GET"])
+    def get_scoli() -> Any:
+        scoli = []
+        if deps.scoala_normala:
+            scoli.append({"nume": deps.scoala_normala.nume, "tip": "pro"})
+        if deps.scoala_muzica:
+            scoli.append({"nume": deps.scoala_muzica.nume, "tip": "pro"})
+        if deps.sistem_gratuit:
+            scoli.append({"nume": "Free Tier", "tip": "free"})
+        logger.info("Returned list of schools (%s entries).", len(scoli))
+        return jsonify({"success": True, "scoli": scoli})
+
+    @app.route("/api/clase", methods=["GET"])
+    def get_clase() -> Any:
+        clase = list(range(5))
+        logger.info("Returned list of classes.")
+        return jsonify({"success": True, "clase": clase})
+
+    @app.route("/api/status", methods=["GET"])
+    def get_system_status() -> Any:
+        free_stats: Dict[str, Any] = {}
+        if deps.token_monitor:
             try:
-                free_stats = token_monitor.get_stats()
-            except:
-                pass
-        
+                free_stats = deps.token_monitor.get_stats()
+            except Exception as exc:
+                logger.error("Nu s-au putut obtine statisticile de tokeni: %s", exc, exc_info=True)
+
         status = {
             "system": "AI Educational System",
             "version": "1.0",
             "timestamp": datetime.now().isoformat(),
             "services": {
                 "pro_tier": {
-                    "available": main_system_available and bool(os.getenv('OPENAI_API_KEY')),
-                    "status": "active" if main_system_available else "unavailable"
+                    "available": deps.main_system_available and bool(os.getenv("OPENAI_API_KEY")),
+                    "status": "active" if deps.main_system_available else "unavailable",
                 },
                 "free_tier": {
-                    "available": free_system_available and sistem_gratuit is not None,
-                    "status": "active" if (free_system_available and sistem_gratuit) else "unavailable",
-                    "users": len(sistem_gratuit.utilizatori_activi) if (free_system_available and sistem_gratuit) else 0,
-                    "max_users": Config.MAX_FREE_USERS if 'Config' in globals() else 10,
-                    "token_usage": free_stats.get("usage_percentage", 0)
-                }
+                    "available": deps.free_system_available and deps.sistem_gratuit is not None,
+                    "status": "active" if deps.free_system_available and deps.sistem_gratuit else "unavailable",
+                    "users": len(getattr(deps.sistem_gratuit, "utilizatori_activi", {})) if deps.sistem_gratuit else 0,
+                    "max_users": getattr(deps.Config, "MAX_FREE_USERS", 10) if deps.Config else 10,
+                    "token_usage": free_stats.get("usage_percentage", 0),
+                },
             },
             "api_keys": {
-                "openai": "configured" if os.getenv('OPENAI_API_KEY') else "missing",
-                "deepseek": "configured" if os.getenv('DEEPSEEK_API_KEY') else "missing",
-                "claude": "configured" if os.getenv('CLAUDE_API_KEY') else "missing"
-            }
+                "openai": "configured" if os.getenv("OPENAI_API_KEY") else "missing",
+                "deepseek": "configured" if os.getenv("DEEPSEEK_API_KEY") else "missing",
+                "claude": "configured" if os.getenv("CLAUDE_API_KEY") else "missing",
+            },
+            "errors": deps.errors,
         }
-        
         return jsonify(status)
-    
-    except Exception as e:
-        logger.error(f"Error getting system status: {e}")
-        return jsonify({"error": str(e)}), 500
 
-# ==================== ENDPOINT PENTRU TESTARE ====================
-
-@app.route('/api/test', methods=['GET'])
-def test_endpoint():
-    """
-    Endpoint simplu pentru testarea conectivității
-    """
-    return jsonify({
-        "message": "API funcționează corect!",
-        "timestamp": datetime.now().isoformat(),
-        "system_status": {
-            "main_system": main_system_available,
-            "free_system": free_system_available,
-            "limiter": limiter_available
-        },
-        "endpoints_available": [
-            "/api/intreaba (PRO)" if main_system_available else "/api/intreaba (UNAVAILABLE)",
-            "/api/free/ask (FREE)" if free_system_available else "/api/free/ask (UNAVAILABLE)",
+    @app.route("/api/test", methods=["GET"])
+    @limit("100/hour")
+    def test_endpoint() -> Any:
+        endpoints = [
+            "/api/intreaba" if deps.main_system_available else "/api/intreaba (unavailable)",
+            "/api/free/ask" if deps.free_system_available else "/api/free/ask (unavailable)",
             "/api/scoli",
             "/api/clase",
             "/api/status",
-            "/api/test"
+            "/api/test",
+            "/health",
         ]
-    })
-@app.route('/health')
-def health_check():
-    return {"status": "healthy", "service": "AI Educational API"}, 200
+        return jsonify(
+            {
+                "message": "API functioneaza corect",
+                "timestamp": datetime.now().isoformat(),
+                "system_status": {
+                    "main_system": deps.main_system_available,
+                    "free_system": deps.free_system_available,
+                    "limiter": deps.limiter_available,
+                },
+                "endpoints_available": endpoints,
+            }
+        )
 
-@app.route('/')
-def home():
-    return jsonify({
-        "message": "AI Educational System API",
-        "version": "1.0",
-        "documentation": "/api/test pentru testare",
-        "status": "running"
-    })
+    @app.route("/health", methods=["GET"])
+    def health_check() -> Any:
+        return {"status": "healthy", "service": "AI Educational API"}, 200
 
-# ==================== GESTIONAREA ERORILOR ====================
+    @app.route("/", methods=["GET"])
+    def home() -> Any:
+        return jsonify(
+            {
+                "message": "AI Educational System API",
+                "version": "1.0",
+                "documentation": "/api/test",
+                "status": "running",
+            }
+        )
 
-@app.errorhandler(404)
-def not_found(error):
-    return jsonify({
-        "error": "Endpoint nu a fost găsit",
-        "message": "Verifică documentația API pentru endpoint-urile disponibile",
-        "timestamp": datetime.now().isoformat()
-    }), 404
 
-@app.errorhandler(500)
-def internal_error(error):
-    logger.error(f"Internal server error: {error}")
-    return jsonify({
-        "error": "Eroare internă de server",
-        "message": "Te rugăm să încerci din nou mai târziu",
-        "timestamp": datetime.now().isoformat()
-    }), 500
+def register_error_handlers(app: Flask) -> None:
+    @app.errorhandler(404)
+    def not_found(error: Exception) -> Any:
+        return (
+            jsonify(
+                {
+                    "error": "Endpoint inexistent",
+                    "message": "Verifica documentatia API pentru rutele disponibile",
+                    "timestamp": datetime.now().isoformat(),
+                }
+            ),
+            404,
+        )
 
-# ==================== PORNIREA SERVERULUI ====================
+    @app.errorhandler(500)
+    def internal_error(error: Exception) -> Any:
+        logger.error("Eroare interna a serverului: %s", error)
+        return (
+            jsonify(
+                {
+                    "error": "Eroare interna",
+                    "message": "Incearca din nou mai tarziu",
+                    "timestamp": datetime.now().isoformat(),
+                }
+            ),
+            500,
+        )
 
-if __name__ == '__main__':
-    logger.info("🚀 Starting Flask API server...")
-    logger.info("📊 Available endpoints:")
-    logger.info("   PRO: /api/intreaba")
-    logger.info("   FREE: /api/free/ask")
-    logger.info("   STATS: /api/free/stats")
-    logger.info("   HEALTH: /api/free/health")
-    logger.info("   COMMON: /api/scoli, /api/clase, /api/status")
-    
+
+def create_app(dependencies: Optional[DependencyContainer] = None) -> Flask:
+    deps = dependencies or load_dependencies()
+    app = Flask(__name__)
+    CORS(app)
+
+    limiter = create_rate_limiter(app, deps)
+    pro_bp = create_pro_blueprint(deps, limiter)
+    free_bp = create_free_blueprint(deps, limiter)
+
+    app.register_blueprint(pro_bp, url_prefix="/api")
+    app.register_blueprint(free_bp, url_prefix="/api/free")
+
+    register_common_routes(app, deps, limiter)
+    register_error_handlers(app)
+    verify_api_keys()
+
+    # Stocam containerul pe app pentru acces in teste/diagnostic
+    app.dependency_container = deps  # type: ignore[attr-defined]
+    return app
+
+
+def perform_daily_cleanup(app: Flask) -> None:
+    deps: DependencyContainer = getattr(app, "dependency_container", None)
+    if not deps or not deps.sistem_gratuit:
+        return
+    try:
+        history = getattr(deps.sistem_gratuit, "istoric_utilizare", {})
+        threshold = datetime.now().date() - timedelta(days=30)
+        for key in list(history.keys()):
+            try:
+                day = datetime.strptime(key, DATE_FORMAT).date()
+            except ValueError:
+                continue
+            if day < threshold:
+                history.pop(key, None)
+    except Exception as exc:
+        logger.error("Curatarea zilnica a istoricului gratuit a esuat: %s", exc, exc_info=True)
+
+
+def _bootstrap_app() -> Flask:
+    deps = load_dependencies()
+    return create_app(deps)
+
+
+app = _bootstrap_app()
+
+
+if __name__ == "__main__":
+    logger.info("Pornire server Flask API...")
+    logger.info("Rute disponibile: /api/intreaba, /api/free/ask, /api/status, /api/test, /health")
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=False)
-    
-    logger.info("🛑 Flask API server stopped.")
+    logger.info("Server Flask API oprit.")
