@@ -102,7 +102,7 @@ def creeaza_configurari_profesor(materie, clasa):
         # Materii care necesită creativitate și interacțiune complexă
         "Comunicare_in_Limba_Romana": ConfigurariProfesor(
             temperature=0.9,
-            model="gpt-4o",
+            model="gpt-5",
             personalitate="prietenos",
             stil_predare="narativ si interactiv",
             tehnici_speciale=["storytelling", "metafore"],
@@ -110,7 +110,7 @@ def creeaza_configurari_profesor(materie, clasa):
         ),
         "Limba_si_Literatura_Romana": ConfigurariProfesor(
             temperature=0.9,
-            model="gpt-4o",
+            model="gpt-5",
             personalitate="creativ",
             stil_predare="poetic si expresiv",
             tehnici_speciale=["poezie", "interpretare"],
@@ -118,7 +118,7 @@ def creeaza_configurari_profesor(materie, clasa):
         ),
         "Matematica_si_Explorarea_mediului": ConfigurariProfesor(
             temperature=0.9,
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-5-20250929",
             personalitate="creativ",
             stil_predare="poetic si expresiv",
             tehnici_speciale=["poezie", "interpretare"],
@@ -126,7 +126,7 @@ def creeaza_configurari_profesor(materie, clasa):
         ),
         "Matematica": ConfigurariProfesor(
             temperature=0.4,
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-5-20250929",
             personalitate="serios",
             stil_predare="precis si analitic",
             tehnici_speciale=["rezolvare probleme", "rationament matematic"],
@@ -134,7 +134,7 @@ def creeaza_configurari_profesor(materie, clasa):
         ),
         "Limba_moderna_Engleza": ConfigurariProfesor(
             temperature=0.8,
-            model="gpt-4o",
+            model="gpt-5",
             personalitate="prietenos",
             stil_predare="conversational si interactiv",
             tehnici_speciale=["dialoguri", "jocuri de rol"],
@@ -142,7 +142,7 @@ def creeaza_configurari_profesor(materie, clasa):
         ),
         "Limba_moderna": ConfigurariProfesor(
             temperature=0.8,
-            model="gpt-4o",
+            model="gpt-5",
             personalitate="empatic",
             stil_predare="contextual si practic",
             tehnici_speciale=["scenarii reale", "activitati interactive"],
@@ -158,7 +158,7 @@ def creeaza_configurari_profesor(materie, clasa):
         ),
         "Arte_vizuale": ConfigurariProfesor(
             temperature=0.8,
-            model="gpt-4o",
+            model="gpt-5",
             personalitate="creativ",
             stil_predare="vizual si experimental",
             tehnici_speciale=["desen intuitiv", "gandire vizuala"],
@@ -166,7 +166,7 @@ def creeaza_configurari_profesor(materie, clasa):
         ),      
         "Dezvoltare_personala": ConfigurariProfesor(
             temperature=0.7,
-            model="gpt-4o",
+            model="gpt-5",
             personalitate="calm",
             stil_predare="reflectiv si empatic",
             tehnici_speciale=["intrebari socratice", "exercitii mindfulness"],
@@ -174,7 +174,7 @@ def creeaza_configurari_profesor(materie, clasa):
         ),
         "Religie": ConfigurariProfesor(
             temperature=0.5,
-            model="gpt-4o",
+            model="gpt-5",
             personalitate="calm",
             stil_predare="reflectiv si etic",
             tehnici_speciale=["pilde", "discutii morale"],
@@ -182,7 +182,7 @@ def creeaza_configurari_profesor(materie, clasa):
         ),
         "Joc_si_Miscare": ConfigurariProfesor(
             temperature=0.8,
-            model="gpt-4o",
+            model="gpt-5",
             personalitate="energic",
             stil_predare="auditiv si kinestezic",
             tehnici_speciale=["ritm", "exercitii vocale"],
@@ -190,7 +190,7 @@ def creeaza_configurari_profesor(materie, clasa):
         ),
         "Muzica_si_Miscare": ConfigurariProfesor(
             temperature=0.9,
-            model="gpt-4o",
+            model="gpt-5",
             personalitate="energic",
             stil_predare="ritmic si kinestezic",
             tehnici_speciale=["dans", "coordonare ritmica"],
@@ -198,7 +198,7 @@ def creeaza_configurari_profesor(materie, clasa):
         ),
         "Teorie_Solfegiu_Dicteu": ConfigurariProfesor(
             temperature=0.6,
-            model="gpt-4o",
+            model="gpt-5",
             personalitate="serios",
             stil_predare="analitic si auditiv",
             tehnici_speciale=["solfegiere", "analiza armonica"],
@@ -206,7 +206,7 @@ def creeaza_configurari_profesor(materie, clasa):
         ),                
         "Educatie_civica": ConfigurariProfesor(
             temperature=0.5,
-            model="gpt-4o",
+            model="gpt-5",
             personalitate="serios",
             stil_predare="logic si structurat",
             tehnici_speciale=["algoritmi", "gandire computationala"],
@@ -214,7 +214,7 @@ def creeaza_configurari_profesor(materie, clasa):
         ),
         "Stiinte_ale_naturii": ConfigurariProfesor(
             temperature=0.6,
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-5-20250929",
             personalitate="curios",
             stil_predare="investigativ si experimental",
             tehnici_speciale=["experimente practice", "descoperire stiintifica"],
@@ -222,7 +222,7 @@ def creeaza_configurari_profesor(materie, clasa):
         ),  
         "Istorie": ConfigurariProfesor(
             temperature=0.7,
-            model="gpt-4o",
+            model="gpt-5",
             personalitate="prietenos",
             stil_predare="narativ si captivant",
             tehnici_speciale=["calatorii virtuale", "istorisiri"],
@@ -230,7 +230,7 @@ def creeaza_configurari_profesor(materie, clasa):
         ),      
         "Georgrafie": ConfigurariProfesor(
             temperature=0.7,
-            model="gpt-4o",
+            model="gpt-5",
             personalitate="explorator",
             stil_predare="documentarist si analitic",
             tehnici_speciale=["calatorii virtuale", "gandire vizuala"],
@@ -241,7 +241,7 @@ def creeaza_configurari_profesor(materie, clasa):
     # Configurări default dacă materia nu e specificată
     return configurari_per_materie.get(
         materie, 
-        ConfigurariProfesor(temperature=0.7, model="gpt-4o", personalitate="prietenos")
+        ConfigurariProfesor(temperature=0.7, model="gpt-5", personalitate="prietenos")
     )
 
 def creeaza_structura_educationala():
