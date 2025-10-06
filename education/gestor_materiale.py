@@ -55,12 +55,14 @@ class GestorMateriale:
         """Build the full folder structure for both schools and all subjects."""
         logger.info("Starting full material directory initialisation...")
 
+        # Folderul pentru director
         cale_director = self.cale_baza / "director_pedagogie"
         cale_director.mkdir(exist_ok=True)
 
+        # Structura pentru școli
         scoli_config: Dict[str, Dict[int, List[str]]] = {
             "Scoala_Normala": {
-                0: [
+                0: [  # Pregătitoare
                     "Comunicare_in_Limba_Romana",
                     "Matematica_si_Explorarea_mediului",
                     "Limba_moderna_Engleza",
@@ -70,7 +72,7 @@ class GestorMateriale:
                     "Dezvoltare_personala",
                     "Religie",
                 ],
-                1: [
+                1: [  # Clasa I
                     "Comunicare_in_Limba_Romana",
                     "Matematica_si_Explorarea_mediului",
                     "Limba_moderna_Engleza",
@@ -80,7 +82,7 @@ class GestorMateriale:
                     "Dezvoltare_personala",
                     "Religie",
                 ],
-                2: [
+                2: [  # Clasa a II-a
                     "Comunicare_in_Limba_Romana",
                     "Matematica_si_Explorarea_mediului",
                     "Limba_moderna",
@@ -90,7 +92,7 @@ class GestorMateriale:
                     "Dezvoltare_personala",
                     "Religie",
                 ],
-                3: [
+                3: [  # Clasa a III-a
                     "Limba_si_Literatura_Romana",
                     "Matematica",
                     "Limba_moderna",
@@ -102,7 +104,7 @@ class GestorMateriale:
                     "Joc_si_Miscare",
                     "Religie",
                 ],
-                4: [
+                4: [  # Clasa a IV-a
                     "Limba_si_Literatura_Romana",
                     "Matematica",
                     "Limba_moderna",
@@ -114,10 +116,10 @@ class GestorMateriale:
                     "Educatie_fizica",
                     "Joc_si_Miscare",
                     "Religie",
-                ],
+                ]
             },
             "Scoala_de_Muzica_George_Enescu": {
-                0: [
+                0: [  # Pregătitoare
                     "Comunicare_in_Limba_Romana",
                     "Matematica_si_Explorarea_mediului",
                     "Limba_moderna_Engleza",
@@ -127,73 +129,81 @@ class GestorMateriale:
                     "Dezvoltare_personala",
                     "Religie",
                 ],
-                1: [
+                1: [  # Clasa I
                     "Comunicare_in_Limba_Romana",
                     "Matematica_si_Explorarea_mediului",
                     "Limba_moderna_Engleza",
-                    "Instrument_principal",
-                    "Teorie_Solfegiu_Dicteu",
                     "Muzica_si_Miscare",
+                    "Teorie_Solfegiu_Dicteu",
                     "Arte_vizuale",
                     "Educatie_fizica",
+                    "Dezvoltare_personala",
+                    "Religie",
                 ],
-                2: [
-                    "Limba_si_Literatura_Romana",
-                    "Matematica",
-                    "Limba_moderna",
-                    "Instrument_principal",
+                2: [  # Clasa a II-a
+                    "Comunicare_in_Limba_Romana",
+                    "Matematica_si_Explorarea_mediului",
+                    "Limba_moderna_Engleza",
+                    "Muzica_si_Miscare",
                     "Teorie_Solfegiu_Dicteu",
-                    "Ansamblu",
+                    "Arte_vizuale",
                     "Educatie_fizica",
+                    "Dezvoltare_personala",
+                    "Religie",
                 ],
-                3: [
+                3: [  # Clasa a III-a
                     "Limba_si_Literatura_Romana",
                     "Matematica",
-                    "Limba_moderna",
+                    "Limba_moderna_Engleza",
                     "Stiinte_ale_naturii",
-                    "Instrument_principal",
+                    "Muzica_si_Miscare",
                     "Teorie_Solfegiu_Dicteu",
-                    "Ansamblu",
-                    "Istorie_muzicala",
+                    "Arte_vizuale",
+                    "Educatie_civica",
                     "Educatie_fizica",
+                    "Joc_si_Miscare",
+                    "Religie",
                 ],
-                4: [
+                4: [  # Clasa a IV-a
                     "Limba_si_Literatura_Romana",
                     "Matematica",
-                    "Limba_moderna",
+                    "Limba_moderna_Engleza",
                     "Stiinte_ale_naturii",
-                    "Instrument_principal",
+                    "Istorie",
+                    "Geografie",
+                    "Muzica_si_Miscare",
                     "Teorie_Solfegiu_Dicteu",
-                    "Ansamblu",
-                    "Istorie_muzicala",
+                    "Arte_vizuale",
+                    "Educatie_civica",
                     "Educatie_fizica",
-                ],
-            },
+                    "Joc_si_Miscare",
+                    "Religie",
+                ]
+            }
         }
-
+        
+        # Maparea profesori pentru fiecare materie (nume standardizat pentru foldere)
         mapare_profesori = {
             "Comunicare_in_Limba_Romana": "Prof_Ion_Creanga",
-            "Limba_si_Literatura_Romana": "Prof_Mihai_Eminescu",
             "Matematica_si_Explorarea_mediului": "Prof_Pitagora",
-            "Matematica": "Prof_Euclid",
-            "Limba_moderna": "Prof_Charles_Dickens",
             "Limba_moderna_Engleza": "Prof_William_Shakespeare",
             "Muzica_si_Miscare": "Prof_Antonio_Vivaldi",
-            "Teorie_Solfegiu_Dicteu": "Prof_Ennio_Morricone",
-            "Instrument_principal": "Prof_Ludwig_van_Beethoven",
-            "Ansamblu": "Prof_Johann_Sebastian_Bach",
             "Arte_vizuale": "Prof_Leonardo_da_Vinci",
             "Educatie_fizica": "Prof_Nadia_Comaneci",
             "Dezvoltare_personala": "Prof_Carl_Jung",
             "Religie": "Prof_Arsenie_Boca",
-            "Educatie_civica": "Prof_Malala_Yousafzai",
+            "Teorie_Solfegiu_Dicteu": "Prof_Ennio_Morricone",
+            "Limba_moderna": "Prof_Charles_Dickens",
+            "Limba_si_Literatura_Romana": "Prof_Mihai_Eminescu",
+            "Matematica": "Prof_Euclid",
             "Stiinte_ale_naturii": "Prof_Albert_Einstein",
+            "Educatie_civica": "Prof_Malala_Yousafzai",
             "Joc_si_Miscare": "Prof_Bruce_Lee",
             "Istorie": "Prof_Herodot",
-            "Geografie": "Prof_Jacques_Yves_Cousteau",
-            "Istorie_muzicala": "Prof_Franz_Schubert",
+            "Geografie": "Prof_Jacques_Yves_Cousteau"            
         }
 
+        # Creăm folderele pentru fiecare școală, clasă, materie și profesor
         for nume_scoala, clase in scoli_config.items():
             for numar_clasa, materii in clase.items():
                 for materie in materii:
@@ -238,6 +248,33 @@ SCOP:
 - Materiale pentru dezvoltarea profesionala a directorilor.
 - Surse pentru imbunatatirea calitatii educationale.
 - Ghiduri pentru gestionarea personalului si relatia cu parintii.
+
+TIPURI DE MATERIALE RECOMANDATE:
+
+1. PSIHOLOGIA COPILULUI (3-10 ani):
+   * dezvoltarea_cognitiva_copii.pdf
+   * etapele_dezvoltarii_emotionale.pdf  
+   * comportamentul_copiilor_scolari.pdf
+
+2. PEDAGOGIE MODERNĂ:
+   * metode_moderne_predare.pdf
+   * evaluarea_progresului_scolar.pdf
+   * diferentiere_curriculara.pdf
+
+3. LEADERSHIP EDUCAȚIONAL:
+   * managementul_unei_scoli.pdf
+   * dezvoltarea_echipei_didactice.pdf
+   * leadership_transformational.pdf
+
+4. COMUNICARE ȘI RELAȚII:
+   * comunicarea_eficienta_cu_parintii.pdf
+   * gestionarea_conflictelor_scolare.pdf
+   * colaborarea_scoala_familie.pdf
+
+5. TEHNOLOGII EDUCAȚIONALE:
+   * integrarea_tehnologiei_in_educatie.pdf
+   * ai_in_educatie.pdf
+   * platforme_digitale_educationale.pdf
 """
         readme_path.write_text(template.strip() + "\n", encoding="utf-8")
 
