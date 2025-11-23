@@ -46,14 +46,24 @@ class Director:
     def incarca_sau_genereaza_profil(self) -> None:
         cale_profil = self.gestor_materiale.cale_baza / "director_pedagogie" / _PROFILE_FILENAME
         profil = None
+        # Check cache validity
         if cale_profil.exists():
             try:
                 profil = json.loads(cale_profil.read_text(encoding="utf-8"))
+                # Invalidare dacă PDF-urile s-au modificat
+                profile_mtime = cale_profil.stat().st_mtime
+                materiale = list((self.gestor_materiale.cale_baza / "director_pedagogie").glob("*.pdf"))
+                if any(m.stat().st_mtime > profile_mtime for m in materiale):
+                    logger.info("PDF-uri modificate, regenerare profil director")
+                    profil = None
             except Exception as exc:
                 logger.warning("Nu s-a putut citi profilul directorului: %s", exc)
         if profil is None:
             profil = self.genereaza_profil_din_materiale()
             if profil:
+                profil["generated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+                materiale = list((self.gestor_materiale.cale_baza / "director_pedagogie").glob("*.pdf"))
+                profil["sources"] = [m.name for m in materiale]
                 try:
                     cale_profil.write_text(json.dumps(profil, ensure_ascii=False, indent=2), encoding="utf-8")
                 except Exception as exc:
@@ -137,28 +147,65 @@ class Director:
             return None
 
         prompt = self.creeaza_prompt_director(intrebare, clasa_tinta, profesori_disponibili)
-        try:
-            response = client.chat.completions.create(
-                model=self.configurari.model,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=144,
-                temperature=self.configurari.temperature,
-            )
-            profesor_ales_nume = response.choices[0].message.content.strip()
-            for profesor in profesori_disponibili:
-                if profesor.nume.lower() in profesor_ales_nume.lower():
-                    self.istoric_decizii.append(
-                        {
-                            "intrebare": intrebare,
-                            "profesor_ales": profesor.nume,
-                            "clasa": clasa_tinta,
-                            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-                        }
-                    )
-                    return profesor
-            logger.info("Directorul nu a returnat un nume clar, se foloseste fallback-ul logic.")
-        except Exception as exc:
-            logger.error("Eroare la alegerea profesorului: %s", exc)
+
+        # Retry cu exponential backoff
+        for tentativa in range(3):
+            try:
+                timeout = 5 * (2**tentativa)  # 5s, 10s, 20s
+                response = client.chat.completions.create(
+                    model=self.configurari.model,
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=200,
+                    temperature=self.configurari.temperature,
+                    timeout=timeout,
+                )
+                content = response.choices[0].message.content.strip()
+
+                # Încearcă să parseze JSON
+                try:
+                    rezultat = json.loads(content)
+                    profesor_ales_nume = rezultat.get("profesor", "")
+                    justificare = rezultat.get("justificare", "")
+                    confidence = rezultat.get("confidence", 0.5)
+                except json.JSONDecodeError:
+                    # Fallback la text simplu
+                    profesor_ales_nume = content
+                    justificare = ""
+                    confidence = 0.5
+
+                for profesor in profesori_disponibili:
+                    if profesor.nume.lower() in profesor_ales_nume.lower():
+                        self.istoric_decizii.append(
+                            {
+                                "intrebare": intrebare,
+                                "profesor_ales": profesor.nume,
+                                "clasa": clasa_tinta,
+                                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                                "metoda": "director_ai",
+                                "justificare": justificare,
+                                "confidence": confidence,
+                            }
+                        )
+                        return profesor
+                logger.info("Directorul nu a returnat un nume clar, se foloseste fallback-ul logic.")
+                break  # success, nu mai reîncercăm
+
+            except openai.RateLimitError as exc:
+                if tentativa == 2:
+                    logger.error("Rate limit depășit după 3 încercări: %s", exc)
+                    break
+                time.sleep(2**tentativa)
+
+            except openai.APITimeoutError as exc:
+                if tentativa == 2:
+                    logger.error("Timeout după 3 încercări: %s", exc)
+                    break
+                time.sleep(1)
+
+            except Exception as exc:
+                logger.error("Eroare tentativa %d: %s", tentativa + 1, exc)
+                if tentativa == 2:
+                    break
 
         fallback = self._alege_profesor_fallback(intrebare, profesori_disponibili, clasa_tinta)
         return fallback or profesori_disponibili[0]
@@ -178,36 +225,121 @@ class Director:
             f"Profesorii disponibili pentru clasa {clasa_tinta}:\n"
             f"{profesori_text}\n\n"
             "Intrebarea elevului:\n"
-            f"\"{intrebare}\"\n\n"
-            "Returneaza DOAR numele profesorului ideal din lista de mai sus."
+            f'"{intrebare}"\n\n'
+            "Returneaza DOAR un JSON valid cu structura:\n"
+            '{"profesor": "Nume Profesor", "justificare": "Motivul alegerii in 1 propozitie", "confidence": 0.0-1.0}'
         )
 
     def _alege_profesor_fallback(self, intrebare: str, profesori: List[Any], clasa_tinta: int):
+        """Fallback cu confidence tracking pentru monitoring."""
         if not profesori:
             return None
         intrebare_lower = intrebare.lower()
         domenii = {
-            "matematica": ["matemat", "numar", "problem", "calcul", "arie", "fract"],
-            "romana": ["litera", "povest", "cuvant", "comunicare"],
-            "muzica": ["muzic", "sunet", "instrument"],
-            "stiinta": ["stiint", "experiment", "natura"],
+            "matematica": ["matemat", "numar", "problem", "calcul", "arie", "fract", "geometr", "algebr"],
+            "romana": ["litera", "povest", "cuvant", "comunicare", "citit", "scris", "gramatic", "text", "compunere"],
+            "limba": ["litera", "povest", "cuvant", "comunicare", "citit", "scris", "gramatic", "text", "limba"],
+            "muzica": ["muzic", "sunet", "instrument", "cant", "ritm", "melodie"],
+            "stiinta": ["stiint", "experiment", "natura", "fizic", "chimic", "biolog"],
+            "arte": ["desen", "pictur", "culor", "creativ", "artistic"],
+            "sport": ["sport", "miscar", "exercit", "fizic", "joac"],
+            "educatie": ["civica", "moral", "comportament", "valori"],
         }
         scoruri = []
         for profesor in profesori:
-            scor = 0
+            scor = {
+                "total": 0,
+                "breakdown": {},
+                "profesor": profesor,
+            }
             materie_lower = getattr(profesor, "materie", "").lower()
             if materie_lower:
-                if materie_lower in intrebare_lower:
-                    scor += 3
+                # Potrivire directă materie (8 puncte)
+                if materie_lower in intrebare_lower or intrebare_lower in materie_lower:
+                    scor["total"] += 8
+                    scor["breakdown"]["materie_exacta"] = 8
+                # Potrivire semantică (5 puncte max)
                 for domeniu, cuvinte in domenii.items():
-                    if domeniu in materie_lower and any(cuvant in intrebare_lower for cuvant in cuvinte):
-                        scor += 2
+                    if domeniu in materie_lower or any(part in materie_lower for part in domeniu.split("_")):
+                        matches = [c for c in cuvinte if c in intrebare_lower]
+                        if matches:
+                            puncte = min(5, len(matches) * 2)
+                            scor["total"] += puncte
+                            scor["breakdown"]["semantica"] = puncte
+                            break  # Evităm double counting
+            # Clasa target (3 puncte)
             if getattr(profesor, "clasa", None) == clasa_tinta:
-                scor += 1
+                scor["total"] += 3
+                scor["breakdown"]["clasa"] = 3
+            # Materiale didactice (2 puncte)
             if getattr(profesor, "cunostinte_din_materiale", ""):
-                scor += 1
-            if any(entry.get("profesor_ales") == getattr(profesor, "nume", "") for entry in self.istoric_decizii[-5:]):
-                scor += 1
-            scoruri.append((scor, profesor))
-        scoruri.sort(key=lambda item: item[0], reverse=True)
-        return scoruri[0][1] if scoruri else None
+                scor["total"] += 2
+                scor["breakdown"]["materiale"] = 2
+            # Experiență recentă (1 punct)
+            if any(
+                entry.get("profesor_ales") == getattr(profesor, "nume", "") for entry in self.istoric_decizii[-5:]
+            ):
+                scor["total"] += 1
+                scor["breakdown"]["istoric"] = 1
+            scoruri.append(scor)
+        scoruri.sort(key=lambda x: x["total"], reverse=True)
+        if scoruri:
+            best = scoruri[0]
+            # Log confidence pentru monitoring
+            confidence = "high" if best["total"] >= 8 else "medium" if best["total"] >= 4 else "low"
+            logger.info(
+                "Fallback: %s (scor=%d, confidence=%s, breakdown=%s)",
+                best["profesor"].nume,
+                best["total"],
+                confidence,
+                best["breakdown"],
+            )
+            # Salvează în istoric decizie
+            self.istoric_decizii.append(
+                {
+                    "intrebare": intrebare,
+                    "profesor_ales": best["profesor"].nume,
+                    "clasa": clasa_tinta,
+                    "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "metoda": "fallback",
+                    "confidence": confidence,
+                    "scor": best["total"],
+                }
+            )
+            return best["profesor"]
+        return None
+
+    def get_metrici_performanta(self) -> Dict[str, Any]:
+        """Metrici pentru monitoring calitate decizii."""
+        if not self.istoric_decizii:
+            return {}
+        total = len(self.istoric_decizii)
+        ai_decizii = [d for d in self.istoric_decizii if d.get("metoda") == "director_ai"]
+        fallback_decizii = [d for d in self.istoric_decizii if d.get("metoda") == "fallback"]
+        avg_confidence_ai = (
+            sum(d.get("confidence", 0) for d in ai_decizii) / len(ai_decizii) if ai_decizii else 0
+        )
+        avg_scor_fallback = (
+            sum(d.get("scor", 0) for d in fallback_decizii) / len(fallback_decizii) if fallback_decizii else 0
+        )
+        return {
+            "total_decizii": total,
+            "ai_decizii": len(ai_decizii),
+            "fallback_decizii": len(fallback_decizii),
+            "rata_succes_ai": round(len(ai_decizii) / total * 100, 2) if total > 0 else 0,
+            "avg_confidence_ai": round(avg_confidence_ai, 2),
+            "avg_scor_fallback": round(avg_scor_fallback, 2),
+            "profesori_populari": self._get_profesori_populari(),
+        }
+
+    def _get_profesori_populari(self) -> List[Dict[str, Any]]:
+        """Top 3 profesori cei mai aleși."""
+        counter = {}
+        for d in self.istoric_decizii[-50:]:  # ultimele 50
+            prof = d.get("profesor_ales")
+            if prof:
+                counter[prof] = counter.get(prof, 0) + 1
+        return [
+            {"nume": prof, "count": count}
+            for prof, count in sorted(counter.items(), key=lambda x: x[1], reverse=True)[:3]
+        ]
